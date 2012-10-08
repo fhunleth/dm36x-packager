@@ -1,7 +1,9 @@
 import struct
+import string
 import ConfigParser
 import argparse
 import zipfile
+import hashlib
 
 BLOCK_SIZE = 512
 
@@ -109,6 +111,9 @@ def read_file(filename):
     fh = open(filename, 'rb')
     return bytearray(fh.read())
 
+def sha1(bytes):
+    return hashlib.sha1(bytes).hexdigest()
+
 def build_mbr_a(memory_map):
     """ Build an MBR that references the first rootfs partition first. """
     mbr = MBR()
@@ -121,8 +126,8 @@ def build_mbr_a(memory_map):
 def build_mbr_b(memory_map):
     """ Build an MBR that references the second rootfs partition first. """
     mbr = MBR()
-    mbr.partition(0, memory_map['rootfs_a_partition_start'], memory_map['rootfs_a_partition_count'], MBR.FS_TYPE_LINUX)
-    mbr.partition(1, memory_map['rootfs_b_partition_start'], memory_map['rootfs_b_partition_count'], MBR.FS_TYPE_LINUX)
+    mbr.partition(0, memory_map['rootfs_b_partition_start'], memory_map['rootfs_b_partition_count'], MBR.FS_TYPE_LINUX)
+    mbr.partition(1, memory_map['rootfs_a_partition_start'], memory_map['rootfs_a_partition_count'], MBR.FS_TYPE_LINUX)
     mbr.partition(2, memory_map['working_partition_start'], memory_map['working_partition_count'], MBR.FS_TYPE_LINUX)
     mbr.partition(3, memory_map['debug_partition_start'], memory_map['debug_partition_count'], MBR.FS_TYPE_LINUX)
     return mbr.mbr
@@ -167,12 +172,162 @@ def build_complete_img(memory_map, args):
     
     return memory
 
+script_template = """#!/bin/sh
+
+set -e
+freshinstall=false
+pvopts="-B 32k"
+numericprogress=false
+archive=
+dest=
+
+while [ $$# -gt 0 ]
+do
+    case "$$1" in
+        -a) shift;archive=$$1;;
+        -d) shift;dest=$$1;;
+        -f) freshinstall=true;;
+        -n) numericprogress=true;pvopts="$$pvopts -n";;
+        -v)
+                echo "$version"
+                exit 0;;
+        -*)
+                echo "arguments:"
+                echo "  -a <archive name> (required)"
+                echo "  -d <destination> (required)"
+                echo "  -f fresh install (on PC)"
+                echo "  -n numeric progress"
+                echo "  -v print firmware version"
+                echo "examples:"
+                echo "  First time programming: -a firmware.fw -f -d /dev/sdc"
+                echo "  Firmware update: -a firmware.fw -d /dev/mmcblk0"
+                exit 1;;
+        *) dest=$$1; break;;
+    esac
+    shift
+done
+
+if [ "$$dest" = "" ]
+then
+    echo Specify a destination
+    exit 1
+fi
+if [ "$$archive" = "" ]
+then
+    echo Specify the archive name
+    exit 1
+fi
+[ $$numericprogress = false ] || echo 1
+if [ ! -w "$$dest" ]
+then
+    echo Cannot write $$dest
+    exit 1
+fi
+if [ "`mount | grep $$dest`" != "" ]
+then
+    echo $$dest must not be mounted
+    exit 1
+fi
+
+if [ $$freshinstall = true ]
+then
+    # Verify the SHA-1's of our images before writing them
+    if [ "`unzip -p $$archive data/boot.img | sha1sum | cut -b 1-40`" != "$boot_img_sha1" ]
+    then
+        echo "SHA-1 mismatch on data/boot.img"
+        exit 1
+    fi
+    if [ "`unzip -p $$archive data/rootfs.img | sha1sum | cut -b 1-40`" != "$rootfs_img_sha1" ]
+    then
+        echo "SHA-1 mismatch on data/rootfs.img"
+        exit 1
+    fi
+    unzip -p $$archive data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest seek=0 bs=128k 2>/dev/null
+    unzip -p $$archive data/rootfs.img | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_a_partition_start 2>/dev/null
+    dd if=/dev/zero count=32 2>/dev/null | pv -N debug -s 16384 $$pvopts | dd of=$$dest seek=$debug_partition_count 2>/dev/null
+    dd if=/dev/zero count=32 2>/dev/null | pv -N data -s 16384 $$pvopts | dd of=$$dest seek=$working_partition_start 2>/dev/null
+else
+    case "$$dest" in
+    (*mmcblk*) partition2=$${dest}p2;;
+    (*)	   partition2=$${dest}2;;
+    esac
+
+    tmpdir=`mktemp -d`
+    checksumfifo=$$tmpdir/csumfifo
+    mkfifo $$checksumfifo
+    checksumout=$$tmpdir/csumout
+
+    # Write the image to the software partition that we're not currently
+    # using.
+    sha1sum $$checksumfifo > $$checksumout &
+    unzip -p $$archive data/rootfs.img | tee $$checksumfifo | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$$partition2 bs=128k 2>/dev/null
+    if [ "`cat $$checksumout | cut -b 1-40`" != "$rootfs_img_sha1" ]
+    then
+            echo "SHA-1 mismatch on rootfs"
+            exit 1
+    fi
+    
+    # Read the block offset numbers of partitions A and B
+    part1_blockno=`dd if=$$dest bs=1 skip=454 count=4 2>/dev/null | hexdump -e '"%d"'`
+    part2_blockno=`dd if=$$dest bs=1 skip=470 count=4 2>/dev/null | hexdump -e '"%d"'`
+
+    if [ $$part1_blockno -gt $$part2_blockno ]
+    then
+        if [ "`unzip -p $$archive data/mbr-a.img | sha1sum | cut -b 1-40`" != "$mbr_a_img_sha1" ]
+        then
+                echo "SHA-1 mismatch on mbr-a"
+                exit 1
+        fi
+        unzip -p $$archive data/mbr-a.img | pv -N mbr-a -s $mbr_a_img_size $$pvopts | dd of=$$dest seek=0 2>/dev/null
+    else
+        if [ "`unzip -p $$archive data/mbr-b.img | sha1sum | cut -b 1-40`" != "$mbr_b_img_sha1" ]
+        then
+                echo "SHA-1 mismatch on mbr-b"
+                exit 1
+        fi
+        unzip -p $$archive data/mbr-b.img | pv -N mbr-b -s $mbr_b_img_size $$pvopts | dd of=$$dest seek=0 2>/dev/null
+    fi
+    rm -fr $$tmpdir
+fi
+exit 0
+"""
+
+def build_script(memory_map, args, fileinfo):
+    template = string.Template(script_template)
+    s = template.substitute(version=args.version,
+                            mbr_a_img_size=fileinfo['data/mbr-a.img'][0],
+                            mbr_b_img_size=fileinfo['data/mbr-b.img'][0],
+                            boot_img_size=fileinfo['data/boot.img'][0],
+                            rootfs_img_size=fileinfo['data/rootfs.img'][0],
+                            boot_img_sha1=fileinfo['data/boot.img'][1],
+                            mbr_a_img_sha1=fileinfo['data/mbr-a.img'][1],
+                            mbr_b_img_sha1=fileinfo['data/mbr-b.img'][1],
+                            rootfs_img_sha1=fileinfo['data/rootfs.img'][1],
+                            rootfs_a_partition_start=memory_map['rootfs_a_partition_start'],
+                            working_partition_start=memory_map['working_partition_start'],
+                            debug_partition_count=memory_map['debug_partition_count'])
+    return s
+
 def create_firmware_package(memory_map, args):
     with zipfile.ZipFile(args.fwfile, 'w', zipfile.ZIP_DEFLATED) as fwzip:
-        fwzip.writestr('data/mbr-a.img', buffer(build_mbr_a(memory_map)))
-        fwzip.writestr('data/mbr-b.img', buffer(build_mbr_b(memory_map)))
-        fwzip.write(args.rootfs_file, 'data/rootfs.img')
-        fwzip.writestr('data/boot.img', buffer(build_boot_img(memory_map, args)))
+        mbr_a = build_mbr_a(memory_map)
+        mbr_b = build_mbr_b(memory_map)
+        bootimg = build_boot_img(memory_map, args)
+        rootfs = read_file(args.rootfs_file)
+        
+        fileinfo = {}
+        fileinfo['data/mbr-a.img'] = (len(mbr_a), sha1(mbr_a))
+        fileinfo['data/mbr-b.img'] = (len(mbr_b), sha1(mbr_b))
+        fileinfo['data/boot.img'] = (len(bootimg), sha1(bootimg))
+        fileinfo['data/rootfs.img'] = (len(rootfs), sha1(rootfs))
+        
+        script = build_script(memory_map, args, fileinfo)
+        
+        fwzip.writestr('install.sh', script)
+        fwzip.writestr('data/mbr-a.img', buffer(mbr_a))
+        fwzip.writestr('data/mbr-b.img', buffer(mbr_b))
+        fwzip.writestr('data/rootfs.img', buffer(rootfs))
+        fwzip.writestr('data/boot.img', buffer(bootimg))
     
 def create_firmware_image(memory_map, args):
     with open(args.imgfile, 'w') as f:
@@ -191,119 +346,7 @@ def load_memory_map(filename):
         memory_map[item[0]] = int(item[1])
     
     return memory_map
-
-
-script = """
-#!/bin/sh
-
-set -e
-freshinstall=false
-dest="/dev/mmcblk0"
-archive="$$1"
-pvopts="-B 32k"
-numericprogress=false
-debug=false
-
-while [ $$# -gt 0 ]
-do
-    case "$$1" in
-        -d) debug=true;;
-        -f) freshinstall=true;;
-        -n) numericprogress=true;pvopts="$$pvopts -n";;
-        -v)
-                echo "$version"
-                exit 0;;
-        -*)
-                echo "usage: $$1 [-dfnv] [storage device]"
-                echo "  -d debug"
-                echo "  -f fresh install (on PC)"
-                echo "  -n numeric progress"
-                echo "  -v print firmware version"
-                echo "examples:"
-                echo "  First time programming: $$1 -f /dev/sdc"
-                echo "  Firmware update: $$1 /dev/mmcblk0"
-                exit 1;;
-        *) dest=$$1; break;;
-    esac
-    shift
-done
-
-[ $$debug = false ] || echo Writing to $$dest
-[ $$numericprogress = false ] || echo 1
-if [ ! -w "$$dest" ]
-then
-        echo Cannot write $$dest
-        exit 1
-fi
-if [ "`mount | grep $$dest`" != "" ]
-then
-        echo $$dest must not be mounted
-        exit 1
-fi
-
-if [ $$freshinstall = true ]
-then
-    # Verify the SHA-1's of our images before writing them
-    if [ "`unzip -p $$archive data/boot.img | sha1sum | cut -b 1-40`" != "$boot_img_sha1" ]
-    then
-        echo "SHA-1 mismatch on data/boot.img"
-        exit 1
-    fi
-    if [ "`unzip -p $$archive data/rootfs.img | sha1sum | cut -b 1-40`" != "$rootfs_img_sha1" ]
-    then
-        echo "SHA-1 mismatch on data/rootfs.img"
-        exit 1
-    fi
-    unzip -p $$archive data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest seek=0 bs=128k 2>/dev/null
-    unzip -p $$archive data/rootfs.img | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$dest seek=$rootfs_sdcard_block_offset 2>/dev/null
-    dd if=/dev/zero count=$userfs_block_size 2>/dev/null | pv -N userfs -s $userfs_size $$pvopts | dd of=$dest seek=$userfs_sdcard_block_offset 2>/dev/null
-    dd if=/dev/zero count=$datafs_block_size 2>/dev/null | pv -N datafs -s $rootfs_size $$pvopts | dd of=$dest seek=$datafs_sdcard_block_offset 2>/dev/null
-else
-    case "$dest" in
-    (*mmcblk*) partition2=${dest}p2;;
-    (*)	   partition2=${dest}2;;
-    esac
-
-    tmpdir=`mktemp -d`
-    checksumfifo=$$tmpdir/csumfifo
-    mkfifo $$checksumfifo
-    checksumout=$$tmpdir/csumout
-
-    # Write the image to the software partition that we're not currently
-    # using.
-    sha1sum $checksumfifo > $checksumout &
-    unzip -p $$archive data/rootfs.img | tee $checksumfifo | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$$partition2 bs=128k 2>/dev/null
-    if [ "`cat $$checksumout | cut -b 1-40`" != "$rootfs_img_sha1" ]
-    then
-            echo "SHA-1 mismatch on rootfs"
-            exit 1
-    fi
     
-    # Read the block offset numbers of partitions A and B
-    part1_blockno=`dd if=$$dest bs=1 skip=454 count=4 2>/dev/null | hexdump -e '"%d"'`
-    part2_blockno=`dd if=$$dest bs=1 skip=470 count=4 2>/dev/null | hexdump -e '"%d"'`
-
-    if [ $$part1_blockno -gt $$part2_blockno ]
-    then
-        if [ "`unzip -p $$archive data/mbr-a.img | sha1sum | cut -b 1-40`" != "$mbr_a_sha1" ]
-        then
-                echo "SHA-1 mismatch on mbr-a"
-                exit 1
-        fi
-        unzip -p $$archive data/mbr-a.img | pv -N mbr-a -s 512 $pvopts | dd of=$dest seek=0 2>/dev/null
-    else
-        if [ "`unzip -p $$archive data/mbr-b.img | sha1sum | cut -b 1-40`" != "$mbr_b_sha1" ]
-        then
-                echo "SHA-1 mismatch on mbr-b"
-                exit 1
-        fi
-        unzip -p $$archive data/mbr-b.img | pv -N mbr-b -s 512 $pvopts | dd of=$dest seek=0 2>/dev/null
-    fi
-    rm -fr $tmpdir
-fi
-exit 0
-"""
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-f', '--fwfile', help = 'path to write the firmware update (.fw) file')
@@ -315,5 +358,9 @@ if __name__ == '__main__':
     parser.add_argument('rootfs_file', help = 'path to rootfs binary')
     args = parser.parse_args()
     
+    memory_map = load_memory_map(args.config)
+    create_firmware_package(memory_map, args)
+    create_firmware_image(memory_map, args)
+
     print args
     
