@@ -119,7 +119,7 @@ def read_file(filename):
     return bytearray(fh.read())
 
 def sha1(bytes):
-    return hashlib.sha1(bytes).hexdigest()
+    return hashlib.sha1(buffer(bytes)).hexdigest()
 
 def build_mbr_a(memory_map):
     """ Build an MBR that references the first rootfs partition first. """
@@ -318,30 +318,31 @@ def build_script(memory_map, args, fileinfo):
     return s
 
 def create_firmware_package(memory_map, args):
-    with zipfile.ZipFile(args.fwfile, 'w', zipfile.ZIP_DEFLATED) as fwzip:
-        mbr_a = build_mbr_a(memory_map)
-        mbr_b = build_mbr_b(memory_map)
-        bootimg = build_boot_img(memory_map, args)
-        rootfs = read_file(args.rootfs_file)
+    mbr_a = build_mbr_a(memory_map)
+    mbr_b = build_mbr_b(memory_map)
+    bootimg = build_boot_img(memory_map, args)
+    rootfs = read_file(args.rootfs_file)
         
-        fileinfo = {}
-        fileinfo['data/mbr-a.img'] = (len(mbr_a), sha1(mbr_a))
-        fileinfo['data/mbr-b.img'] = (len(mbr_b), sha1(mbr_b))
-        fileinfo['data/boot.img'] = (len(bootimg), sha1(bootimg))
-        fileinfo['data/rootfs.img'] = (len(rootfs), sha1(rootfs))
+    fileinfo = {}
+    fileinfo['data/mbr-a.img'] = (len(mbr_a), sha1(mbr_a))
+    fileinfo['data/mbr-b.img'] = (len(mbr_b), sha1(mbr_b))
+    fileinfo['data/boot.img'] = (len(bootimg), sha1(bootimg))
+    fileinfo['data/rootfs.img'] = (len(rootfs), sha1(rootfs))
         
-        script = build_script(memory_map, args, fileinfo)
+    script = build_script(memory_map, args, fileinfo)
         
-        fwzip.writestr('install.sh', script)
-        fwzip.writestr('data/mbr-a.img', buffer(mbr_a))
-        fwzip.writestr('data/mbr-b.img', buffer(mbr_b))
-        fwzip.writestr('data/rootfs.img', buffer(rootfs))
-        fwzip.writestr('data/boot.img', buffer(bootimg))
+    fwzip = zipfile.ZipFile(args.fwfile, 'w', zipfile.ZIP_DEFLATED)
+    fwzip.writestr('install.sh', script)
+    fwzip.writestr('data/mbr-a.img', buffer(mbr_a))
+    fwzip.writestr('data/mbr-b.img', buffer(mbr_b))
+    fwzip.writestr('data/rootfs.img', buffer(rootfs))
+    fwzip.writestr('data/boot.img', buffer(bootimg))
+    fwzip.close()
     
 def create_firmware_image(memory_map, args):
     with open(args.imgfile, 'w') as f:
         contents = build_complete_img(memory_map, args)
-        f.write(contents)
+        f.write(buffer(contents))
         
 def load_memory_map(filename):
     config = configparser.ConfigParser()
