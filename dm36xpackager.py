@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 import struct
 import string
 import ConfigParser
@@ -363,6 +365,4 @@ if __name__ == '__main__':
     memory_map = load_memory_map(args.config)
     create_firmware_package(memory_map, args)
     create_firmware_image(memory_map, args)
-
-    print args
     
