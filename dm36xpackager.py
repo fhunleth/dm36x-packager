@@ -243,7 +243,8 @@ then
         exit 1
     fi
     unzip -p $$archive data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest seek=0 bs=128k 2>/dev/null
-    unzip -p $$archive data/rootfs.img | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_a_partition_start 2>/dev/null
+    unzip -p $$archive data/rootfs.img | pv -N rootfs-a -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_a_partition_start 2>/dev/null
+    unzip -p $$archive data/rootfs.img | pv -N rootfs-b -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_b_partition_start 2>/dev/null
     dd if=/dev/zero count=32 2>/dev/null | pv -N debug -s 16384 $$pvopts | dd of=$$dest seek=$debug_partition_count 2>/dev/null
     dd if=/dev/zero count=32 2>/dev/null | pv -N data -s 16384 $$pvopts | dd of=$$dest seek=$working_partition_start 2>/dev/null
 else
@@ -304,6 +305,7 @@ def build_script(memory_map, args, fileinfo):
                             mbr_b_img_sha1=fileinfo['data/mbr-b.img'][1],
                             rootfs_img_sha1=fileinfo['data/rootfs.img'][1],
                             rootfs_a_partition_start=memory_map['rootfs_a_partition_start'],
+                            rootfs_b_partition_start=memory_map['rootfs_b_partition_start'],
                             working_partition_start=memory_map['working_partition_start'],
                             debug_partition_count=memory_map['debug_partition_count'])
     return s
