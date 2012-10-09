@@ -2,9 +2,10 @@
 
 import struct
 import string
-import argparse
+import getopt
 import zipfile
 import hashlib
+import sys
 
 try:
     import configparser
@@ -355,18 +356,78 @@ def load_memory_map(filename):
     
     return memory_map
     
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-f', '--fwfile', help = 'path to write the firmware update (.fw) file')
-    parser.add_argument('-g', '--imgfile', help = 'path to write the SDCard programmer image (.img) file')
-    parser.add_argument('-v', '--version', help = 'specify the version string to embed')
-    parser.add_argument('-c', '--config', help = 'configuration file')
-    parser.add_argument('ubl_file', help = 'path to UBL binary')
-    parser.add_argument('uboot_file', help = 'path to U-boot binary')
-    parser.add_argument('rootfs_file', help = 'path to rootfs binary')
-    args = parser.parse_args()
+usage = """DM36x Firmware Packager
+
+Arguments:
+  -f,--fwfile=path      Output path for firmware file
+  -g,--imgfile=path     Output path for raw image file
+  -v,--version=string   Version to embed into the firmware file
+  -c,--config=path      Path to memory map configuration file
+  -s,--ubl=path         Path to UBL binary
+  -u,--uboot=path       Path to U-Boot binary
+  -r,--rootfs=path      Path to Rootfs binary
+"""
+
+class Args(object):
+    fwfile = None
+    imgfile = None
+    version = 'Unknown'
+    config = None
+    ubl_file = None
+    uboot_file = None
+    rootfs_file = None
     
+if __name__ == '__main__':
+    try:
+        opts, optargs = getopt.getopt(sys.argv[1:], "hf:g:v:c:s:u:r:", ["fwfile=", "imgfile=", "version=", "config=", "ubl=", "uboot=", "rootfs="])
+    except getopt.GetoptError, err:
+        # print help information and exit:
+        print str(err) # will print something like "option -a not recognized"
+        print(usage)
+        sys.exit(2)
+    args = Args()
+    for o, a in opts:
+        if o in ("-f", "--fwfile="):
+            args.fwfile = a
+        elif o in ("-g", "--imgfile="):
+            args.imgfile = a
+        elif o in ("-v", "--version="):
+            args.version = a
+        elif o in ("-c", "--config="):
+            args.config = a
+        elif o in ("-s", "--ubl="):
+            args.ubl_file = a
+        elif o in ("-u", "--uboot="):
+            args.uboot_file = a
+        elif o in ("-r", "--rootfs="):
+            args.rootfs_file = a
+        elif o in ("-h", "--help"):
+            print(usage)
+            sys.exit(1)
+        else:
+            assert False, "unhandled option"
+    
+    if (args.config == None):
+        print("Specify a config file")
+        sys.exit(1)
+    
+    if (args.ubl_file == None):
+        print("Specify a UBL binary")
+        sys.exit(1)
+    
+    if (args.uboot_file == None):
+        print("Specify a U-Boot binary")
+        sys.exit(1)
+        
+    if (args.rootfs_file == None):
+        print("Specify a rootfs binary")
+        sys.exit(1)
+        
     memory_map = load_memory_map(args.config)
-    create_firmware_package(memory_map, args)
-    create_firmware_image(memory_map, args)
+    
+    if (args.fwfile != None):
+        create_firmware_package(memory_map, args)
+    
+    if (args.imgfile != None):
+        create_firmware_image(memory_map, args)
     
