@@ -1,0 +1,4 @@
+
+./dm36xpackager.py -c myconfig.cfg -f test.fw -g test.img -v myversion ../buildroot/output/images/ubl_DM36x_dm365sdmmc.bin ../buildroot/output/images/u-boot.bin ../buildroot/output/images/rootfs.ext2 
+
+unzip -p test.fw install.sh | sh -s - -a test.fw -d test.out -f
