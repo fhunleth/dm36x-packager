@@ -2,10 +2,14 @@
 
 import struct
 import string
-import ConfigParser
 import argparse
 import zipfile
 import hashlib
+
+try:
+    import configparser
+except ImportError:
+    import ConfigParser as configparser
 
 BLOCK_SIZE = 512
 
@@ -339,7 +343,7 @@ def create_firmware_image(memory_map, args):
         f.write(contents)
         
 def load_memory_map(filename):
-    config = ConfigParser.ConfigParser()
+    config = configparser.ConfigParser()
     result = config.read(filename)
     if result == []:
         raise IOError("Could not open " + filename)
