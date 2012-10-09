@@ -18,5 +18,5 @@ fi
 archive="$1"
 shift
 
-unzip -p $archive install.sh | sudo sh -s - -a $archive $@
+unzip -p $archive install.sh | sh -s - -a $archive $@
 
