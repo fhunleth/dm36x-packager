@@ -202,6 +202,7 @@ def build_complete_img(memory_map, args):
 script_template = """#!/bin/sh
 
 set -e
+updatebootloader=$force_bootloader
 freshinstall=false
 pvopts="-B 32k"
 numericprogress=false
@@ -212,6 +213,7 @@ while [ $$# -gt 0 ]
 do
     case "$$1" in
         -a) shift;archive=$$1;;
+	-b) updatebootloader=true;;
         -d) shift;dest=$$1;;
         -f) freshinstall=true;;
         -n) numericprogress=true;pvopts="$$pvopts -n";;
@@ -221,6 +223,7 @@ do
         -*)
                 echo "arguments:"
                 echo "  -a <archive name> (required)"
+		echo "  -b update boot loader too"
                 echo "  -d <destination> (required)"
                 echo "  -f fresh install (on PC)"
                 echo "  -n numeric progress"
@@ -294,11 +297,18 @@ else
             echo "SHA-1 mismatch on rootfs"
             exit 1
     fi
-    
+
     # Read the block offset numbers of partitions A and B
     part1_blockno=`dd if=$$dest bs=1 skip=454 count=4 2>/dev/null | hexdump -e '"%d"'`
     part2_blockno=`dd if=$$dest bs=1 skip=470 count=4 2>/dev/null | hexdump -e '"%d"'`
 
+    # Update the bootloader
+    if [ $$updatebootloader = true ]
+    then
+        unzip -p $$archive data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest skip=1 seek=1 2>/dev/null
+    fi
+
+    # Now that we're done, update the MBR to point to the new code
     if [ $$part1_blockno -gt $$part2_blockno ]
     then
         if [ "`unzip -p $$archive data/mbr-a.img | sha1sum | cut -b 1-40`" != "$mbr_a_img_sha1" ]
@@ -322,6 +332,11 @@ exit 0
 
 def build_script(memory_map, args, fileinfo):
     template = string.Template(script_template)
+    if args.bootloader:
+	force_bootloader = "true"
+    else:
+	force_bootloader = "false"
+
     s = template.substitute(version=args.version,
                             mbr_a_img_size=fileinfo['data/mbr-a.img'][0],
                             mbr_b_img_size=fileinfo['data/mbr-b.img'][0],
@@ -334,7 +349,8 @@ def build_script(memory_map, args, fileinfo):
                             rootfs_a_partition_start=memory_map['rootfs_a_partition_start'],
                             rootfs_b_partition_start=memory_map['rootfs_b_partition_start'],
                             working_partition_start=memory_map['working_partition_start'],
-                            debug_partition_count=memory_map['debug_partition_count'])
+                            debug_partition_count=memory_map['debug_partition_count'],
+			    force_bootloader=force_bootloader)
     return s
 
 def create_firmware_package(memory_map, args):
@@ -380,6 +396,7 @@ def load_memory_map(filename):
 usage = """DM36x Firmware Packager
 
 Arguments:
+  -b,--bootloader       Specify to force the bootloader to be programmed
   -f,--fwfile=path      Output path for firmware file
   -g,--imgfile=path     Output path for raw image file
   -v,--version=string   Version to embed into the firmware file
@@ -390,6 +407,7 @@ Arguments:
 """
 
 class Args(object):
+    bootloader = None
     fwfile = None
     imgfile = None
     version = 'Unknown'
@@ -400,7 +418,7 @@ class Args(object):
     
 if __name__ == '__main__':
     try:
-        opts, optargs = getopt.getopt(sys.argv[1:], "hf:g:v:c:s:u:r:", ["fwfile=", "imgfile=", "version=", "config=", "ubl=", "uboot=", "rootfs="])
+        opts, optargs = getopt.getopt(sys.argv[1:], "hbf:g:v:c:s:u:r:", ["help", "bootloader", "fwfile=", "imgfile=", "version=", "config=", "ubl=", "uboot=", "rootfs="])
     except getopt.GetoptError, err:
         # print help information and exit:
         print str(err) # will print something like "option -a not recognized"
@@ -408,7 +426,9 @@ if __name__ == '__main__':
         sys.exit(2)
     args = Args()
     for o, a in opts:
-        if o in ("-f", "--fwfile="):
+        if o in ("-b", "--bootloader"):
+	    args.bootloader = True
+        elif o in ("-f", "--fwfile="):
             args.fwfile = a
         elif o in ("-g", "--imgfile="):
             args.imgfile = a
