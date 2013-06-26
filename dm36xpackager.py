@@ -259,6 +259,8 @@ then
     exit 1
 fi
 
+$additional_checks
+
 if [ $$freshinstall = true ]
 then
     # Verify the SHA-1's of our images before writing them
@@ -337,6 +339,13 @@ def build_script(memory_map, args, fileinfo):
     else:
 	force_bootloader = "false"
 
+    if args.additional_checks:
+	f = open(args.additional_checks, 'r')
+	additional_checks = f.read()
+	f.close()
+    else:
+	additional_checks = ""
+
     s = template.substitute(version=args.version,
                             mbr_a_img_size=fileinfo['data/mbr-a.img'][0],
                             mbr_b_img_size=fileinfo['data/mbr-b.img'][0],
@@ -350,7 +359,8 @@ def build_script(memory_map, args, fileinfo):
                             rootfs_b_partition_start=memory_map['rootfs_b_partition_start'],
                             working_partition_start=memory_map['working_partition_start'],
                             debug_partition_count=memory_map['debug_partition_count'],
-			    force_bootloader=force_bootloader)
+			    force_bootloader=force_bootloader,
+			    additional_checks=additional_checks)
     return s
 
 def create_firmware_package(memory_map, args):
@@ -404,6 +414,7 @@ Arguments:
   -s,--ubl=path         Path to UBL binary
   -u,--uboot=path       Path to U-Boot binary
   -r,--rootfs=path      Path to Rootfs binary
+  -t,--additionalchecks=path Path to script fragment containing validation checks
 """
 
 class Args(object):
@@ -418,7 +429,7 @@ class Args(object):
     
 if __name__ == '__main__':
     try:
-        opts, optargs = getopt.getopt(sys.argv[1:], "hbf:g:v:c:s:u:r:", ["help", "bootloader", "fwfile=", "imgfile=", "version=", "config=", "ubl=", "uboot=", "rootfs="])
+        opts, optargs = getopt.getopt(sys.argv[1:], "hbf:g:v:c:s:u:r:t:", ["help", "bootloader", "fwfile=", "imgfile=", "version=", "config=", "ubl=", "uboot=", "rootfs=", "additionalchecks="])
     except getopt.GetoptError, err:
         # print help information and exit:
         print str(err) # will print something like "option -a not recognized"
@@ -442,6 +453,8 @@ if __name__ == '__main__':
             args.uboot_file = a
         elif o in ("-r", "--rootfs="):
             args.rootfs_file = a
+	elif o in ("-t", "--additionalchecks="):
+	    args.additional_checks = a
         elif o in ("-h", "--help"):
             print(usage)
             sys.exit(1)
