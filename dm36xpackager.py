@@ -264,19 +264,19 @@ $additional_checks
 if [ $$freshinstall = true ]
 then
     # Verify the SHA-1's of our images before writing them
-    if [ "`unzip -p $$archive data/boot.img | sha1sum | cut -b 1-40`" != "$boot_img_sha1" ]
+    if [ "`unzip -p "$$archive" data/boot.img | sha1sum | cut -b 1-40`" != "$boot_img_sha1" ]
     then
         echo "SHA-1 mismatch on data/boot.img"
         exit 1
     fi
-    if [ "`unzip -p $$archive data/rootfs.img | sha1sum | cut -b 1-40`" != "$rootfs_img_sha1" ]
+    if [ "`unzip -p "$$archive" data/rootfs.img | sha1sum | cut -b 1-40`" != "$rootfs_img_sha1" ]
     then
         echo "SHA-1 mismatch on data/rootfs.img"
         exit 1
     fi
-    unzip -p $$archive data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest seek=0 bs=128k 2>/dev/null
-    unzip -p $$archive data/rootfs.img | pv -N rootfs-a -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_a_partition_start 2>/dev/null
-    unzip -p $$archive data/rootfs.img | pv -N rootfs-b -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_b_partition_start 2>/dev/null
+    unzip -p "$$archive" data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest seek=0 bs=128k 2>/dev/null
+    unzip -p "$$archive" data/rootfs.img | pv -N rootfs-a -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_a_partition_start 2>/dev/null
+    unzip -p "$$archive" data/rootfs.img | pv -N rootfs-b -s $rootfs_img_size $$pvopts | dd of=$$dest seek=$rootfs_b_partition_start 2>/dev/null
     dd if=/dev/zero count=32 2>/dev/null | pv -N debug -s 16384 $$pvopts | dd of=$$dest seek=$debug_partition_count 2>/dev/null
     dd if=/dev/zero count=32 2>/dev/null | pv -N data -s 16384 $$pvopts | dd of=$$dest seek=$working_partition_start 2>/dev/null
 else
@@ -293,7 +293,7 @@ else
     # Write the image to the software partition that we're not currently
     # using.
     sha1sum $$checksumfifo > $$checksumout &
-    unzip -p $$archive data/rootfs.img | tee $$checksumfifo | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$$partition2 bs=128k 2>/dev/null
+    unzip -p "$$archive" data/rootfs.img | tee $$checksumfifo | pv -N rootfs -s $rootfs_img_size $$pvopts | dd of=$$partition2 bs=128k 2>/dev/null
     if [ "`cat $$checksumout | cut -b 1-40`" != "$rootfs_img_sha1" ]
     then
             echo "SHA-1 mismatch on rootfs"
@@ -307,25 +307,25 @@ else
     # Update the bootloader
     if [ $$updatebootloader = true ]
     then
-        unzip -p $$archive data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest skip=1 seek=1 2>/dev/null
+        unzip -p "$$archive" data/boot.img | pv -N boot -s $boot_img_size $$pvopts | dd of=$$dest skip=1 seek=1 2>/dev/null
     fi
 
     # Now that we're done, update the MBR to point to the new code
     if [ $$part1_blockno -gt $$part2_blockno ]
     then
-        if [ "`unzip -p $$archive data/mbr-a.img | sha1sum | cut -b 1-40`" != "$mbr_a_img_sha1" ]
+        if [ "`unzip -p "$$archive" data/mbr-a.img | sha1sum | cut -b 1-40`" != "$mbr_a_img_sha1" ]
         then
                 echo "SHA-1 mismatch on mbr-a"
                 exit 1
         fi
-        unzip -p $$archive data/mbr-a.img | pv -N mbr-a -s $mbr_a_img_size $$pvopts | dd of=$$dest seek=0 2>/dev/null
+        unzip -p "$$archive" data/mbr-a.img | pv -N mbr-a -s $mbr_a_img_size $$pvopts | dd of=$$dest seek=0 2>/dev/null
     else
-        if [ "`unzip -p $$archive data/mbr-b.img | sha1sum | cut -b 1-40`" != "$mbr_b_img_sha1" ]
+        if [ "`unzip -p "$$archive" data/mbr-b.img | sha1sum | cut -b 1-40`" != "$mbr_b_img_sha1" ]
         then
                 echo "SHA-1 mismatch on mbr-b"
                 exit 1
         fi
-        unzip -p $$archive data/mbr-b.img | pv -N mbr-b -s $mbr_b_img_size $$pvopts | dd of=$$dest seek=0 2>/dev/null
+        unzip -p "$$archive" data/mbr-b.img | pv -N mbr-b -s $mbr_b_img_size $$pvopts | dd of=$$dest seek=0 2>/dev/null
     fi
     rm -fr $$tmpdir
 fi
